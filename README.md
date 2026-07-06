@@ -2,6 +2,10 @@
 
 这个目录是纯静态页面，可以直接发布到 GitHub Pages / Cloudflare Pages。
 
+当前 Pages 地址：
+
+https://xy177.github.io/limbuscompany-any/
+
 页面本身不保存人格缓存，不包含 QQ 机器人控制功能，也不包含任何 API Key。它只通过浏览器请求机器人服务器公开的随机人格 API：
 
 - `GET /api/health`
