@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>随机人格生成器</title>
-  <script src="./config.js"></script>
+  <script src="./assets/random-identity.js" defer></script>
   <style>
     :root {
       --ink: #211713;
@@ -199,40 +199,6 @@
       font-size: 0.92rem;
     }
 
-    .api-card {
-      display: none;
-      margin: 0 0 22px;
-      padding: 18px;
-      border-color: rgba(189, 74, 37, 0.36);
-    }
-
-    .api-card.visible {
-      display: block;
-    }
-
-    .api-card label {
-      display: block;
-      margin-bottom: 8px;
-      font-weight: 800;
-    }
-
-    .api-row {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      flex-wrap: wrap;
-    }
-
-    .api-row input {
-      flex: 1 1 360px;
-      min-width: 0;
-      border: 1px solid var(--line);
-      border-radius: 16px;
-      padding: 12px 14px;
-      font: inherit;
-      background: rgba(255, 255, 255, 0.55);
-    }
-
     .result {
       display: grid;
       gap: 16px;
@@ -286,7 +252,7 @@
       <div>
         <div class="seal">罪</div>
         <h1>随机人格<br />生成器</h1>
-        <p class="subtitle">基于机器人服务器本地灰机 Wiki 人格详情缓存随机拼装。可以选择单体系、双体系，也可以指定体系组合，例如充能 + 呼吸法。</p>
+        <p class="subtitle">基于 GitHub 静态缓存中的灰机 Wiki 人格详情随机拼装。可以选择单体系、双体系，也可以指定体系组合，例如充能 + 呼吸法。</p>
       </div>
       <form class="panel" id="generator">
         <div class="mode-grid">
@@ -310,88 +276,58 @@
         <div class="actions">
           <button type="submit" id="submit">生成随机人格</button>
           <button type="button" class="secondary" id="clear">清空体系</button>
-          <span class="status" id="status">等待读取服务器缓存...</span>
+          <span class="status" id="status">等待读取 GitHub 缓存...</span>
         </div>
         <div class="notice">提示：弹药不会单独存在；如果只选弹药，会自动补一个非弹药体系。</div>
       </form>
-    </section>
-
-    <section class="api-card" id="apiCard">
-      <label for="apiBase">服务器 API 地址</label>
-      <div class="api-row">
-        <input id="apiBase" placeholder="例如：https://random.example.com" />
-        <button type="button" class="secondary" id="saveApi">保存并重试</button>
-      </div>
-      <p class="notice">这个 GitHub 静态页需要读取机器人服务器 API。正式发布时应在 <code>config.js</code> 里写死 HTTPS 地址，普通访问者就不需要填写。</p>
     </section>
 
     <section class="result" id="result"></section>
   </main>
 
   <script>
-    const systems = ["烧伤", "流血", "震颤", "破裂", "沉沦", "呼吸法", "充能", "弹药"];
-    const apiBaseFromConfig = typeof window.RANDOM_IDENTITY_API_BASE === "string"
-      ? window.RANDOM_IDENTITY_API_BASE.trim()
-      : "";
-    const params = new URLSearchParams(location.search);
-    const apiBaseFromQuery = params.get("api") ? params.get("api").trim() : "";
-    const apiBaseFromStorage = localStorage.getItem("randomIdentityApiBase") || "";
-    let apiBase = normalizeApiBase(apiBaseFromQuery || apiBaseFromConfig || apiBaseFromStorage);
-
     const form = document.querySelector("#generator");
     const result = document.querySelector("#result");
     const statusEl = document.querySelector("#status");
     const submit = document.querySelector("#submit");
     const systemsEl = document.querySelector("#systems");
-    const apiCard = document.querySelector("#apiCard");
-    const apiInput = document.querySelector("#apiBase");
+    let cachedData = null;
 
-    systemsEl.innerHTML = systems.map((system) => `
-      <label class="pill">
-        <input type="checkbox" name="systems" value="${escapeHtml(system)}" />
-        <span>${escapeHtml(system)}</span>
-      </label>
-    `).join("");
-
-    apiInput.value = apiBase;
     document.querySelector("#clear").addEventListener("click", () => {
       document.querySelectorAll("input[name=systems]").forEach((input) => input.checked = false);
     });
 
-    document.querySelector("#saveApi").addEventListener("click", () => {
-      apiBase = normalizeApiBase(apiInput.value);
-      localStorage.setItem("randomIdentityApiBase", apiBase);
-      refreshHealth();
-    });
-
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      if (!ensureApiBase()) {
+      if (!cachedData) {
+        showError("GitHub 静态缓存还没有读取完成，请稍后再试。");
         return;
       }
 
       submit.disabled = true;
       statusEl.textContent = "生成中...";
       result.innerHTML = "";
-      const payload = {
+      const selectedMode = new FormData(form).get("mode");
+      const options = {
         mode: new FormData(form).get("mode"),
         systems: [...document.querySelectorAll("input[name=systems]:checked")].map((input) => input.value)
       };
+      if (selectedMode === "single") {
+        options.systemCount = 1;
+      } else if (selectedMode === "dual") {
+        options.systemCount = 2;
+      }
 
       try {
-        const response = await fetch(apiUrl("/api/random"), {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-        const data = await response.json();
-        if (!response.ok || !data.ok) {
-          throw new Error(data.error || data.message || "生成失败");
+        const data = window.RandomIdentityGenerator.generate(cachedData, options);
+        if (!data.ok) {
+          throw new Error(data.message || "生成失败");
         }
 
         const parts = Array.isArray(data.parts) && data.parts.length ? data.parts : [data.message || ""];
         result.innerHTML = parts.map((part, index) => cardHtml(index, part)).join("");
-        statusEl.textContent = "生成完成" + (data.fetchedAt ? "，缓存：" + new Date(data.fetchedAt).toLocaleString() : "");
+        const stats = window.RandomIdentityGenerator.stats(cachedData);
+        statusEl.textContent = "生成完成" + (stats.fetchedAt ? "，缓存：" + new Date(stats.fetchedAt).toLocaleString() : "");
       } catch (error) {
         showError(error.message || String(error));
         statusEl.textContent = "生成失败";
@@ -400,48 +336,32 @@
       }
     });
 
-    refreshHealth();
+    window.addEventListener("DOMContentLoaded", () => {
+      const systems = window.RandomIdentityGenerator.systems || ["烧伤", "流血", "震颤", "破裂", "沉沦", "呼吸法", "充能", "弹药"];
+      systemsEl.innerHTML = systems.map((system) => `
+        <label class="pill">
+          <input type="checkbox" name="systems" value="${escapeHtml(system)}" />
+          <span>${escapeHtml(system)}</span>
+        </label>
+      `).join("");
+      loadStaticCache();
+    });
 
-    async function refreshHealth() {
-      if (!ensureApiBase()) {
-        return;
-      }
-
-      statusEl.textContent = "缓存状态读取中...";
+    async function loadStaticCache() {
+      statusEl.textContent = "GitHub 缓存读取中...";
       try {
-        const response = await fetch(apiUrl("/api/health"), { method: "GET" });
-        const data = await response.json();
-        if (!response.ok || !data.ok) {
-          throw new Error(data.error || "缓存状态读取失败");
+        const response = await fetch("./data/random-identity-cache.json", { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error("缓存文件读取失败：" + response.status);
         }
 
-        apiCard.classList.remove("visible");
-        statusEl.textContent = "缓存 " + data.identitiesCount + " 条，更新时间：" + (data.fetchedAt ? new Date(data.fetchedAt).toLocaleString() : "未知");
+        cachedData = await response.json();
+        const stats = window.RandomIdentityGenerator.stats(cachedData);
+        statusEl.textContent = "缓存 " + stats.identitiesCount + " 条，更新时间：" + (stats.fetchedAt ? new Date(stats.fetchedAt).toLocaleString() : "未知");
       } catch (error) {
-        apiCard.classList.add("visible");
-        showError("无法连接机器人服务器 API：" + (error.message || String(error)));
+        showError("无法读取 GitHub 静态缓存：" + (error.message || String(error)));
         statusEl.textContent = "缓存状态读取失败";
       }
-    }
-
-    function ensureApiBase() {
-      if (apiBase) {
-        apiCard.classList.remove("visible");
-        return true;
-      }
-
-      apiCard.classList.add("visible");
-      statusEl.textContent = "未配置服务器 API 地址";
-      showError("GitHub Pages 版本需要一个公网 HTTPS 服务器 API 地址。");
-      return false;
-    }
-
-    function apiUrl(path) {
-      return apiBase + path;
-    }
-
-    function normalizeApiBase(value) {
-      return String(value || "").trim().replace(/\/+$/, "");
     }
 
     function cardHtml(index, text) {
